@@ -1,3 +1,7 @@
+-- ENHANCED CLIENT SCRIPT WITH UPDATED UI
+-- Place this script in StarterPlayer/StarterPlayerScripts
+-- Name it exactly "VotingNPCClient.client.lua"
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -5,30 +9,87 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-print("VotingNPCClient Enhanced script started!")
+print("Enhanced VotingNPCClient script starting...")
 
--- Create voting UI, now with current vote highlighting
-local function createVotingUI(currentVote)
-    print("Creating voting UI with current vote:", currentVote)
-    -- Check if UI already exists
+-- Make sure we can find the RemoteEvents
+local function waitForRemotes()
+    local maxWaitTime = 10
+    local startTime = tick()
+    
+    -- Keep trying until we find the folder or time out
+    while not ReplicatedStorage:FindFirstChild("NPCRemotes") do
+        if tick() - startTime > maxWaitTime then
+            warn("Timed out waiting for NPCRemotes folder")
+            return nil
+        end
+        wait(0.5)
+    end
+    
+    local NPCRemotes = ReplicatedStorage.NPCRemotes
+    
+    -- Wait for all required events
+    local events = {}
+    local requiredEvents = {"OpenVoteMenu", "SubmitVote", "VoteCooldown"}
+    
+    for _, eventName in ipairs(requiredEvents) do
+        local event = NPCRemotes:FindFirstChild(eventName)
+        if not event then
+            local timeLeft = maxWaitTime - (tick() - startTime)
+            if timeLeft <= 0 then
+                warn("Timed out waiting for " .. eventName)
+                return nil
+            end
+            
+            -- Try to wait for it
+            event = NPCRemotes:WaitForChild(eventName, timeLeft)
+            if not event then
+                warn("Could not find " .. eventName)
+                return nil
+            end
+        end
+        
+        events[eventName] = event
+    end
+    
+    -- Get idea content if available
+    local ideaInfo = {}
+    
+    if NPCRemotes:FindFirstChild("IdeaInfo") then
+        local infoFolder = NPCRemotes.IdeaInfo
+        
+        if infoFolder:FindFirstChild("Title") then
+            ideaInfo.title = infoFolder.Title.Value
+        end
+        
+        if infoFolder:FindFirstChild("Description") then
+            ideaInfo.description = infoFolder.Description.Value
+        end
+    end
+    
+    return events, ideaInfo
+end
+
+-- Create a voting UI with current vote highlighted
+local function createVotingUI(currentVote, ideaInfo)
+    -- Remove any existing UI
     if playerGui:FindFirstChild("VotingUI") then
         playerGui.VotingUI:Destroy()
     end
     
-    -- Create ScreenGui
+    -- Create the main GUI
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "VotingUI"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = playerGui
     
-    -- Create main frame
+    -- Main frame
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
     mainFrame.Size = UDim2.new(0, 400, 0, 300)
-    mainFrame.Position = UDim2.new(0.5, -200, 0.5, -150)
+    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0) -- Center position
     mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     mainFrame.BorderSizePixel = 0
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5) -- Anchor at center
     mainFrame.ClipsDescendants = true
     mainFrame.Parent = screenGui
     
@@ -55,7 +116,7 @@ local function createVotingUI(currentVote)
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextSize = 24
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.Text = "רעיון חדש למשחק"
+    titleLabel.Text = ideaInfo.title or "רעיון חדש למשחק"
     titleLabel.Parent = mainFrame
     
     -- Add description
@@ -68,11 +129,11 @@ local function createVotingUI(currentVote)
     descriptionLabel.Font = Enum.Font.Gotham
     descriptionLabel.TextSize = 18
     descriptionLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    descriptionLabel.Text = "אנחנו שוקלים להוסיף מערכת משימות חדשה בגרסה הבאה של המשחק. המערכת תכלול משימות יומיות ושבועיות עם פרסים מיוחדים. האם אתם מעוניינים בתכונה זו?"
+    descriptionLabel.Text = ideaInfo.description or "הוספת אזורים שונים עם מוזיקות שונות: אזור לשינה, אזור לריכוז, אזור לעבודה, אזור לכיף עם חברים ועוד."
     descriptionLabel.TextWrapped = true
     descriptionLabel.Parent = mainFrame
     
-    -- Current vote status (if player already voted)
+    -- Show current vote status if already voted
     if currentVote ~= nil then
         local voteStatusLabel = Instance.new("TextLabel")
         voteStatusLabel.Name = "VoteStatusLabel"
@@ -87,22 +148,7 @@ local function createVotingUI(currentVote)
         voteStatusLabel.Parent = mainFrame
     end
     
-    -- Add change vote instructions if already voted
-    if currentVote ~= nil then
-        local changeVoteLabel = Instance.new("TextLabel")
-        changeVoteLabel.Name = "ChangeVoteLabel"
-        changeVoteLabel.Size = UDim2.new(0.9, 0, 0, 20)
-        changeVoteLabel.Position = UDim2.new(0.5, 0, 0, 215)
-        changeVoteLabel.AnchorPoint = Vector2.new(0.5, 0)
-        changeVoteLabel.BackgroundTransparency = 1
-        changeVoteLabel.Font = Enum.Font.Gotham
-        changeVoteLabel.TextSize = 14
-        changeVoteLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-        changeVoteLabel.Text = "אתה יכול לשנות את הצבעתך על ידי לחיצה על כפתור אחר"
-        changeVoteLabel.Parent = mainFrame
-    end
-    
-    -- Create vote buttons container
+    -- Buttons container
     local buttonsContainer = Instance.new("Frame")
     buttonsContainer.Name = "ButtonsContainer"
     buttonsContainer.Size = UDim2.new(0.9, 0, 0, 60)
@@ -111,7 +157,7 @@ local function createVotingUI(currentVote)
     buttonsContainer.BackgroundTransparency = 1
     buttonsContainer.Parent = mainFrame
     
-    -- Add layout for buttons
+    -- Button layout
     local layout = Instance.new("UIListLayout")
     layout.FillDirection = Enum.FillDirection.Horizontal
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -119,53 +165,49 @@ local function createVotingUI(currentVote)
     layout.Padding = UDim.new(0, 20)
     layout.Parent = buttonsContainer
     
-    -- Create vote yes button
-    local voteYesButton = Instance.new("TextButton")
-    voteYesButton.Name = "VoteYesButton"
-    voteYesButton.Size = UDim2.new(0, 150, 0, 50)
-    
-    -- Highlight current vote if yes
+    -- Yes button (Like)
+    local yesButton = Instance.new("TextButton")
+    yesButton.Name = "YesButton"
+    yesButton.Size = UDim2.new(0, 150, 0, 50)
+    -- Highlight if this is the current vote
     if currentVote == true then
-        voteYesButton.BackgroundColor3 = Color3.fromRGB(60, 180, 60)  -- Brighter green for selected
-        voteYesButton.BorderSizePixel = 2
-        voteYesButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+        yesButton.BackgroundColor3 = Color3.fromRGB(60, 180, 60) -- Brighter green
+        yesButton.BorderSizePixel = 2
+        yesButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
     else
-        voteYesButton.BackgroundColor3 = Color3.fromRGB(40, 120, 40)
+        yesButton.BackgroundColor3 = Color3.fromRGB(40, 120, 40)
     end
-    
-    voteYesButton.Font = Enum.Font.GothamBold
-    voteYesButton.TextSize = 18
-    voteYesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    voteYesButton.Text = "אהבתי את הרעיון"
-    voteYesButton.Parent = buttonsContainer
+    yesButton.Font = Enum.Font.GothamBold
+    yesButton.TextSize = 18
+    yesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    yesButton.Text = "אהבתי את הרעיון"
+    yesButton.Parent = buttonsContainer
     
     local yesCorner = Instance.new("UICorner")
     yesCorner.CornerRadius = UDim.new(0, 8)
-    yesCorner.Parent = voteYesButton
+    yesCorner.Parent = yesButton
     
-    -- Create vote no button
-    local voteNoButton = Instance.new("TextButton")
-    voteNoButton.Name = "VoteNoButton"
-    voteNoButton.Size = UDim2.new(0, 150, 0, 50)
-    
-    -- Highlight current vote if no
+    -- No button (Dislike)
+    local noButton = Instance.new("TextButton")
+    noButton.Name = "NoButton"
+    noButton.Size = UDim2.new(0, 150, 0, 50)
+    -- Highlight if this is the current vote
     if currentVote == false then
-        voteNoButton.BackgroundColor3 = Color3.fromRGB(180, 60, 60)  -- Brighter red for selected
-        voteNoButton.BorderSizePixel = 2
-        voteNoButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
+        noButton.BackgroundColor3 = Color3.fromRGB(180, 60, 60) -- Brighter red
+        noButton.BorderSizePixel = 2
+        noButton.BorderColor3 = Color3.fromRGB(255, 255, 255)
     else
-        voteNoButton.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+        noButton.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
     end
-    
-    voteNoButton.Font = Enum.Font.GothamBold
-    voteNoButton.TextSize = 18
-    voteNoButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    voteNoButton.Text = "לא אהבתי את הרעיון"
-    voteNoButton.Parent = buttonsContainer
+    noButton.Font = Enum.Font.GothamBold
+    noButton.TextSize = 18
+    noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    noButton.Text = "לא אהבתי את הרעיון"
+    noButton.Parent = buttonsContainer
     
     local noCorner = Instance.new("UICorner")
     noCorner.CornerRadius = UDim.new(0, 8)
-    noCorner.Parent = voteNoButton
+    noCorner.Parent = noButton
     
     -- Close button
     local closeButton = Instance.new("TextButton")
@@ -184,16 +226,15 @@ local function createVotingUI(currentVote)
     closeCorner.CornerRadius = UDim.new(1, 0)
     closeCorner.Parent = closeButton
     
-    -- Animate opening
+    -- Animation
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
     local openTween = TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Size = UDim2.new(0, 400, 0, 300)
     })
     openTween:Play()
     
-    -- Button Events
+    -- Button handlers
     closeButton.MouseButton1Click:Connect(function()
-        print("Close button clicked")
         local closeTween = TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0)
         })
@@ -203,104 +244,106 @@ local function createVotingUI(currentVote)
         end)
     end)
     
-    voteYesButton.MouseButton1Click:Connect(function()
+    yesButton.MouseButton1Click:Connect(function()
         print("Voted: Liked")
         ReplicatedStorage.NPCRemotes.SubmitVote:FireServer(true)
         
-        -- Show confirmation animation
-        local originalColor = voteYesButton.BackgroundColor3
-        voteYesButton.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
-        game:GetService("Debris"):AddItem(screenGui, 0.5)  -- Clean up after animation
+        -- Confirm animation
+        yesButton.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+        wait(0.1)
         
+        -- Close the menu
         local closeTween = TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0)
         })
         closeTween:Play()
+        closeTween.Completed:Connect(function()
+            screenGui:Destroy()
+        end)
     end)
     
-    voteNoButton.MouseButton1Click:Connect(function()
+    noButton.MouseButton1Click:Connect(function()
         print("Voted: Disliked")
         ReplicatedStorage.NPCRemotes.SubmitVote:FireServer(false)
         
-        -- Show confirmation animation
-        local originalColor = voteNoButton.BackgroundColor3
-        voteNoButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-        game:GetService("Debris"):AddItem(screenGui, 0.5)  -- Clean up after animation
+        -- Confirm animation
+        noButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+        wait(0.1)
         
+        -- Close the menu
         local closeTween = TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0)
         })
         closeTween:Play()
+        closeTween.Completed:Connect(function()
+            screenGui:Destroy()
+        end)
     end)
     
     return screenGui
 end
 
--- Create already voted notification
-local function createVoteChangedNotification(newVote)
-    print("Creating vote changed notification")
-    -- Check if notification already exists
-    if playerGui:FindFirstChild("VoteChangedNotification") then
-        playerGui.VoteChangedNotification:Destroy()
+-- Create cooldown notification - Wide format at top of screen
+local function createCooldownNotification(remainingTime)
+    if playerGui:FindFirstChild("CooldownNotification") then
+        playerGui.CooldownNotification:Destroy()
     end
     
-    -- Create ScreenGui
+    -- Create notification GUI
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "VoteChangedNotification"
+    screenGui.Name = "CooldownNotification"
     screenGui.ResetOnSpawn = false
     screenGui.Parent = playerGui
     
-    -- Create notification frame
+    -- Create notification frame - Wide and at top
     local notifFrame = Instance.new("Frame")
     notifFrame.Name = "NotificationFrame"
-    notifFrame.Size = UDim2.new(0, 300, 0, 100)
-    notifFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    notifFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    notifFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    notifFrame.Size = UDim2.new(0, 500, 0, 40) -- Wide and short
+    notifFrame.Position = UDim2.new(0.5, 0, 0, 40) -- Top center
+    notifFrame.AnchorPoint = Vector2.new(0.5, 0) -- Anchor at top center
+    notifFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 80)
     notifFrame.BorderSizePixel = 0
     notifFrame.Parent = screenGui
     
     -- Add gradient
     local uiGradient = Instance.new("UIGradient")
     uiGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 30, 30)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 50, 90)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 70))
     })
     uiGradient.Rotation = 45
     uiGradient.Parent = notifFrame
     
     -- Add corner
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
+    corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = notifFrame
     
-    -- Add text
+    -- Add message - single line
     local textLabel = Instance.new("TextLabel")
     textLabel.Name = "MessageLabel"
-    textLabel.Size = UDim2.new(1, -20, 1, -20)
+    textLabel.Size = UDim2.new(1, -20, 1, 0)
     textLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
     textLabel.AnchorPoint = Vector2.new(0.5, 0.5)
     textLabel.BackgroundTransparency = 1
     textLabel.Font = Enum.Font.GothamBold
-    textLabel.TextSize = 18
+    textLabel.TextSize = 16
     textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    textLabel.Text = newVote 
-        and "ההצבעה שלך שונתה ל: בעד הרעיון" 
-        or "ההצבעה שלך שונתה ל: לא בעד הרעיון"
-    textLabel.TextWrapped = true
+    textLabel.Text = "יש להמתין " .. remainingTime .. " שניות לפני שינוי הצבעה"
+    textLabel.TextWrapped = false -- Single line
     textLabel.Parent = notifFrame
     
-    -- Animate
-    notifFrame.Size = UDim2.new(0, 0, 0, 0)
+    -- Animate from top
+    notifFrame.Position = UDim2.new(0.5, 0, 0, -50) -- Start off-screen
     local openTween = TweenService:Create(notifFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 300, 0, 100)
+        Position = UDim2.new(0.5, 0, 0, 40)
     })
     openTween:Play()
     
-    -- Auto close after 3 seconds
-    task.delay(2, function()
+    -- Auto close
+    task.delay(3, function()
         local closeTween = TweenService:Create(notifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-            Size = UDim2.new(0, 0, 0, 0)
+            Position = UDim2.new(0.5, 0, 0, -50)
         })
         closeTween:Play()
         closeTween.Completed:Connect(function()
@@ -311,24 +354,32 @@ local function createVoteChangedNotification(newVote)
     return screenGui
 end
 
--- Connect to the RemoteEvent
-spawn(function()
-    while not ReplicatedStorage:FindFirstChild("NPCRemotes") do
-        print("Waiting for NPCRemotes folder...")
-        wait(1)
+-- Main initialization
+local function initialize()
+    print("Initializing Enhanced Voting Client...")
+    
+    -- Wait for remote events and idea info
+    local events, ideaInfo = waitForRemotes()
+    if not events then
+        warn("Failed to find required remote events")
+        return
     end
     
-    print("Found NPCRemotes folder")
+    print("Found all required RemoteEvents")
     
-    local openVoteMenu = ReplicatedStorage.NPCRemotes:WaitForChild("OpenVoteMenu")
-    
-    -- Enhanced to receive current vote status
-    openVoteMenu.OnClientEvent:Connect(function(currentVote)
-        print("Received menu open event, current vote:", currentVote)
-        createVotingUI(currentVote)
+    -- Connect event handlers
+    events.OpenVoteMenu.OnClientEvent:Connect(function(currentVote)
+        print("Received vote menu open event, current vote:", currentVote)
+        createVotingUI(currentVote, ideaInfo)
     end)
     
-    print("Successfully connected to OpenVoteMenu event")
-end)
+    events.VoteCooldown.OnClientEvent:Connect(function(remainingTime)
+        print("Received cooldown notification: " .. remainingTime .. " seconds")
+        createCooldownNotification(remainingTime)
+    end)
+    
+    print("Enhanced voting client system ready")
+end
 
-print("VotingNPCClient Enhanced initialization complete")
+-- Start the system
+initialize()
