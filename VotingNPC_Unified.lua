@@ -1,277 +1,356 @@
--- FINAL UNIFIED VOTING NPC SCRIPT
--- Place this script INSIDE your NPC model (not in ServerScriptService)
--- DELETE ALL OTHER versions of VotingNPC scripts
+--[[
+FINAL UNIFIED VOTING NPC SCRIPT
+
+IMPORTANT SETUP INSTRUCTIONS:
+1. Place this script INSIDE your Voting NPC model
+2. The NPC model must have a PrimaryPart (usually the Torso/HumanoidRootPart)
+3. Make sure there are NO OTHER voting NPC scripts in the game
+4. Place VotingNPCClient_Unified.client.lua in StarterPlayerScripts
+   (rename it to just VotingNPCClient.client.lua)
+
+This script fixes:
+- Duplicate hologram text issues
+- Vote changing cooldown (10 seconds)
+- Hologram display radius limit (7 studs)
+- Proper cleanup when players leave
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local ServerStorage = game:GetService("ServerStorage")
 
-local VOTE_COOLDOWN = 10  -- 10 seconds between vote changes
+-- CONFIGURATION
+local VOTE_COOLDOWN = 10 -- Seconds before a player can change their vote
+local DISPLAY_RADIUS = 7 -- Studs radius for hologram visibility
+local HOLOGRAM_HEIGHT = 5 -- Height above NPC head for the vote display
 
-print("Unified VotingNPC script starting...")
+print("=== Unified VotingNPC System Starting ===")
 
--- Ensure this script is in the NPC model
-local npc = script.Parent
-if not npc:IsA("Model") then
-    error("VotingNPC script must be placed inside an NPC model!")
-    return
+----------------------------
+-- INITIALIZATION
+----------------------------
+
+-- Ensure we're in an NPC model
+local isInNPC = false
+local npcModel = script.Parent
+if npcModel:IsA("Model") and npcModel.PrimaryPart then
+    isInNPC = true
+    print("NPC model found with PrimaryPart")
+else
+    warn("WARNING: This script should be placed inside an NPC model with a PrimaryPart")
+    warn("Current parent:", npcModel.Name, "is", npcModel.ClassName)
+    -- Will continue running but some features may not work correctly
 end
 
--- Basic storage setup
-if not ServerStorage:FindFirstChild("VotedPlayers") then
-    local votedPlayersFolder = Instance.new("Folder")
-    votedPlayersFolder.Name = "VotedPlayers"
-    votedPlayersFolder.Parent = ServerStorage
+-- Remove any existing voting NPCs to prevent duplicates
+print("Checking for duplicate scripts...")
+local duplicates = 0
+for _, existingScript in pairs(npcModel:GetDescendants()) do
+    if existingScript:IsA("Script") and 
+       existingScript ~= script and 
+       (existingScript.Name:find("VotingNPC") or existingScript.Name:find("Vote")) then
+        print("Found duplicate script:", existingScript.Name, "- Disabling")
+        existingScript.Disabled = true
+        duplicates = duplicates + 1
+    end
 end
+print("Disabled", duplicates, "duplicate scripts")
 
-if not ServerStorage:FindFirstChild("VotesFor") then
-    local votesFor = Instance.new("IntValue")
-    votesFor.Name = "VotesFor"
-    votesFor.Value = 0
-    votesFor.Parent = ServerStorage
-end
+-- Initialize storage
+local voteData = {
+    likes = 0,
+    dislikes = 0,
+    voted = {}, -- [userId] = {vote = bool, timestamp = number}
+    voteDisplay = nil
+}
 
-if not ServerStorage:FindFirstChild("VotesAgainst") then
-    local votesAgainst = Instance.new("IntValue")
-    votesAgainst.Name = "VotesAgainst"
-    votesAgainst.Value = 0
-    votesAgainst.Parent = ServerStorage
-end
-
--- Set up RemoteEvents
-local remoteEventNames = {"OpenVoteMenu", "SubmitVote", "VoteCooldown"}
+-- Setup event folder for client-server communication
 local NPCRemotes
-
-if not ReplicatedStorage:FindFirstChild("NPCRemotes") then
-    -- Create the folder
+if ReplicatedStorage:FindFirstChild("NPCRemotes") then
+    NPCRemotes = ReplicatedStorage.NPCRemotes
+    -- Clean up any existing events to prevent duplicates
+    for _, child in pairs(NPCRemotes:GetChildren()) do
+        child:Destroy()
+    end
+    print("Cleaned up existing NPCRemotes folder")
+else
     NPCRemotes = Instance.new("Folder")
     NPCRemotes.Name = "NPCRemotes"
     NPCRemotes.Parent = ReplicatedStorage
-    
-    -- Create all needed remote events
-    for _, name in ipairs(remoteEventNames) do
-        local event = Instance.new("RemoteEvent")
-        event.Name = name
-        event.Parent = NPCRemotes
-    end
-    
-    print("Created RemoteEvents folder with all events")
-else
-    NPCRemotes = ReplicatedStorage.NPCRemotes
-    
-    -- Ensure all events exist
-    for _, name in ipairs(remoteEventNames) do
-        if not NPCRemotes:FindFirstChild(name) then
-            local event = Instance.new("RemoteEvent")
-            event.Name = name
-            event.Parent = NPCRemotes
-            print("Created missing RemoteEvent: " .. name)
-        end
-    end
+    print("Created new NPCRemotes folder")
 end
 
--- Remove all existing BillboardGuis from the workspace
-for _, obj in pairs(workspace:GetDescendants()) do
-    if obj:IsA("BillboardGui") and obj.Name == "VoteDisplay" then
-        obj:Destroy()
-    end
-end
+-- Create RemoteEvents
+local openVoteMenuEvent = Instance.new("RemoteEvent")
+openVoteMenuEvent.Name = "OpenVoteMenu"
+openVoteMenuEvent.Parent = NPCRemotes
 
--- Find NPC's primary part
-local primaryPart = npc.PrimaryPart or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("Part")
-if not primaryPart then
-    error("NPC has no valid parts for display!")
-    return
-end
+local submitVoteEvent = Instance.new("RemoteEvent")
+submitVoteEvent.Name = "SubmitVote"
+submitVoteEvent.Parent = NPCRemotes
 
--- Remove any ClickDetectors
-for _, part in pairs(npc:GetDescendants()) do
-    if part:IsA("BasePart") then
-        for _, child in pairs(part:GetChildren()) do
-            if child:IsA("ClickDetector") then
-                child:Destroy()
-            end
-        end
-    end
-end
+local voteCooldownEvent = Instance.new("RemoteEvent")
+voteCooldownEvent.Name = "VoteCooldown"
+voteCooldownEvent.Parent = NPCRemotes
 
--- Create the vote display
+print("RemoteEvents created successfully")
+
+----------------------------
+-- VOTE DISPLAY FUNCTIONS
+----------------------------
+
+-- Create a vote display above the NPC
 local function createVoteDisplay()
-    -- Remove any existing displays
-    for _, child in pairs(primaryPart:GetChildren()) do
-        if child:IsA("BillboardGui") and child.Name == "VoteDisplay" then
-            child:Destroy()
-        end
+    -- First clean up any existing displays
+    if voteData.voteDisplay and voteData.voteDisplay.Parent then
+        voteData.voteDisplay:Destroy()
     end
     
-    -- Create a new display
-    local voteDisplay = Instance.new("BillboardGui")
-    voteDisplay.Name = "VoteDisplay"
-    voteDisplay.Size = UDim2.new(0, 200, 0, 100)
-    voteDisplay.StudsOffset = Vector3.new(0, 3, 0)
-    voteDisplay.AlwaysOnTop = true
-    voteDisplay.MaxDistance = 7
-    voteDisplay.Parent = primaryPart
+    -- Create a new BillboardGui to display votes
+    local billboardGui = Instance.new("BillboardGui")
+    billboardGui.Name = "VoteDisplay"
+    billboardGui.Size = UDim2.new(0, 200, 0, 50)
+    billboardGui.StudsOffset = Vector3.new(0, HOLOGRAM_HEIGHT, 0)
+    billboardGui.Adornee = npcModel.PrimaryPart
+    billboardGui.AlwaysOnTop = true
+    billboardGui.MaxDistance = DISPLAY_RADIUS -- Only visible within this range
     
-    local votesText = Instance.new("TextLabel")
-    votesText.Name = "VotesText"
-    votesText.Size = UDim2.new(1, 0, 1, 0)
-    votesText.BackgroundTransparency = 1
-    votesText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    votesText.TextStrokeTransparency = 0
-    votesText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    votesText.Font = Enum.Font.GothamBold
-    votesText.TextSize = 20
-    votesText.Parent = voteDisplay
+    -- Create the text label for the vote count
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Name = "VoteCountLabel"
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextSize = 20
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextStrokeTransparency = 0
+    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.Parent = billboardGui
     
-    return voteDisplay
+    -- Update with current vote counts
+    updateVoteText(textLabel)
+    
+    -- Add the display to the workspace
+    billboardGui.Parent = npcModel
+    voteData.voteDisplay = billboardGui
+    
+    print("Vote display created")
+    return billboardGui
 end
 
--- Update only the text
-local function updateDisplayText()
-    local display = primaryPart:FindFirstChild("VoteDisplay")
-    if not display then
-        display = createVoteDisplay()
-    end
+-- Update the text on the vote display
+function updateVoteText(textLabel)
+    if not textLabel or not textLabel.Parent then return end
     
-    local textLabel = display:FindFirstChild("VotesText")
-    if textLabel then
-        textLabel.Text = "בעד הרעיון: " .. ServerStorage.VotesFor.Value .. 
-                        "\nלא בעד הרעיון: " .. ServerStorage.VotesAgainst.Value
-    end
-end
-
--- Create display
-local voteDisplay = createVoteDisplay()
-updateDisplayText()
-
--- Add ProximityPrompt
-local existingPrompt = primaryPart:FindFirstChild("ProximityPrompt")
-if existingPrompt then
-    existingPrompt:Destroy()
-end
-
-local prompt = Instance.new("ProximityPrompt")
-prompt.ObjectText = "NPC"
-prompt.ActionText = "דבר עם ה־NPC"
-prompt.HoldDuration = 0
-prompt.MaxActivationDistance = 10
-prompt.RequiresLineOfSight = false
-prompt.KeyboardKeyCode = Enum.KeyCode.E
-prompt.Parent = primaryPart
-
--- Tracking variables
-local lastInteraction = {}  -- For general interactions
-local lastVoteTime = {}     -- For vote change cooldown
-
--- Handle prompt trigger
-prompt.Triggered:Connect(function(player)
-    -- Basic cooldown check
-    local currentTime = tick()
-    if lastInteraction[player.UserId] and currentTime - lastInteraction[player.UserId] < 1 then
-        return
-    end
-    lastInteraction[player.UserId] = currentTime
+    -- Format: 👍 Likes: X | 👎 Dislikes: Y
+    local likesEmoji = "👍"
+    local dislikesEmoji = "👎"
     
-    -- Get current vote status
-    local voteKey = "Vote_" .. player.UserId
-    local voteRecord = ServerStorage.VotedPlayers:FindFirstChild(voteKey)
-    local currentVote = nil
+    textLabel.Text = likesEmoji .. " אהבו: " .. voteData.likes .. " | " .. 
+                      dislikesEmoji .. " לא אהבו: " .. voteData.dislikes
     
-    if voteRecord and voteRecord:IsA("BoolValue") then
-        currentVote = voteRecord.Value
-    end
-    
-    -- Open menu
-    NPCRemotes.OpenVoteMenu:FireClient(player, currentVote)
-end)
-
--- Handle vote submission
-NPCRemotes.SubmitVote.OnServerEvent:Connect(function(player, liked)
-    if not player or not player:IsA("Player") then return end
-    
-    -- Basic rate limiting
-    local currentTime = tick()
-    if lastInteraction[player.UserId] and currentTime - lastInteraction[player.UserId] < 0.5 then
-        return
-    end
-    lastInteraction[player.UserId] = currentTime
-    
-    -- Get vote record
-    local voteKey = "Vote_" .. player.UserId
-    local voteRecord = ServerStorage.VotedPlayers:FindFirstChild(voteKey)
-    
-    if voteRecord and voteRecord:IsA("BoolValue") then
-        -- Player has voted before - check for vote changing
-        if voteRecord.Value ~= liked then
-            -- Check cooldown for changing votes
-            if lastVoteTime[player.UserId] and currentTime - lastVoteTime[player.UserId] < VOTE_COOLDOWN then
-                -- Still in cooldown
-                local remainingTime = math.ceil(VOTE_COOLDOWN - (currentTime - lastVoteTime[player.UserId]))
-                NPCRemotes.VoteCooldown:FireClient(player, remainingTime)
-                return
-            end
-            
-            -- Passed cooldown, allow vote change
-            if voteRecord.Value == true then
-                -- Was "for", now "against"
-                ServerStorage.VotesFor.Value = math.max(0, ServerStorage.VotesFor.Value - 1)
-                ServerStorage.VotesAgainst.Value = ServerStorage.VotesAgainst.Value + 1
-            else
-                -- Was "against", now "for"
-                ServerStorage.VotesAgainst.Value = math.max(0, ServerStorage.VotesAgainst.Value - 1)
-                ServerStorage.VotesFor.Value = ServerStorage.VotesFor.Value + 1
-            end
-            
-            -- Update record and timestamp
-            voteRecord.Value = liked
-            lastVoteTime[player.UserId] = currentTime
-            print(player.Name .. " changed vote")
-        else
-            -- Same vote as before
-            print(player.Name .. " voted the same as before")
-        end
+    -- Color the text based on which has more votes
+    if voteData.likes > voteData.dislikes then
+        textLabel.TextColor3 = Color3.fromRGB(85, 255, 127) -- Green
+    elseif voteData.dislikes > voteData.likes then
+        textLabel.TextColor3 = Color3.fromRGB(255, 85, 85) -- Red
     else
+        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255) -- White (equal)
+    end
+end
+
+-- Update the vote display with current totals
+local function updateVoteDisplay()
+    -- If display doesn't exist, create it
+    if not voteData.voteDisplay or not voteData.voteDisplay.Parent then
+        voteData.voteDisplay = createVoteDisplay()
+        return
+    end
+    
+    -- Otherwise just update the text
+    local textLabel = voteData.voteDisplay:FindFirstChild("VoteCountLabel")
+    if textLabel then
+        updateVoteText(textLabel)
+    end
+end
+
+----------------------------
+-- INTERACTION HANDLING
+----------------------------
+
+-- Process a player's vote
+local function processVote(player, liked)
+    local userId = player.UserId
+    
+    -- First vote or changing vote after cooldown?
+    if not voteData.voted[userId] then
         -- First time voting
-        if voteRecord then voteRecord:Destroy() end
+        voteData.voted[userId] = {
+            vote = liked,
+            timestamp = os.time()
+        }
         
-        voteRecord = Instance.new("BoolValue")
-        voteRecord.Name = voteKey
-        voteRecord.Value = liked
-        voteRecord.Parent = ServerStorage.VotedPlayers
-        
-        -- Record timestamp
-        lastVoteTime[player.UserId] = currentTime
-        
-        -- Update counts
+        -- Update totals
         if liked then
-            ServerStorage.VotesFor.Value = ServerStorage.VotesFor.Value + 1
+            voteData.likes = voteData.likes + 1
         else
-            ServerStorage.VotesAgainst.Value = ServerStorage.VotesAgainst.Value + 1
+            voteData.dislikes = voteData.dislikes + 1
         end
         
-        print("New vote from " .. player.Name)
+        print(player.Name, "voted:", liked and "Liked" or "Disliked")
+    else
+        -- Changing vote, check cooldown
+        local lastVote = voteData.voted[userId]
+        local timeSinceLastVote = os.time() - lastVote.timestamp
+        
+        if timeSinceLastVote < VOTE_COOLDOWN then
+            -- Cooldown still active
+            local timeRemaining = math.ceil(VOTE_COOLDOWN - timeSinceLastVote)
+            print(player.Name, "tried to change vote too soon. Cooldown:", timeRemaining, "seconds")
+            voteCooldownEvent:FireClient(player, timeRemaining)
+            return false
+        end
+        
+        -- Cooldown passed, allow vote change
+        local previousVote = lastVote.vote
+        
+        -- Only make changes if the vote is actually different
+        if previousVote ~= liked then
+            -- Update totals (remove old vote, add new vote)
+            if previousVote then
+                voteData.likes = voteData.likes - 1
+            else
+                voteData.dislikes = voteData.dislikes - 1
+            end
+            
+            if liked then
+                voteData.likes = voteData.likes + 1
+            else
+                voteData.dislikes = voteData.dislikes + 1
+            end
+            
+            -- Update player's vote record
+            voteData.voted[userId] = {
+                vote = liked,
+                timestamp = os.time()
+            }
+            
+            print(player.Name, "changed vote from", previousVote and "Like" or "Dislike", 
+                "to", liked and "Like" or "Dislike")
+        else
+            print(player.Name, "voted the same as before:", liked and "Like" or "Dislike")
+        end
     end
     
     -- Update the display
-    updateDisplayText()
-end)
+    updateVoteDisplay()
+    return true
+end
 
--- Self-repair system
-spawn(function()
-    while wait(5) do
-        -- Check if display still exists
-        if not primaryPart:FindFirstChild("VoteDisplay") then
-            voteDisplay = createVoteDisplay()
-            updateDisplayText()
-        end
+-- Handle click/touch detection
+local function setupInteraction()
+    if not isInNPC then
+        warn("NPC model not properly setup, interaction may not work correctly")
+        return
     end
-end)
+    
+    local clickDetector = npcModel:FindFirstChild("ClickDetector")
+    if not clickDetector then
+        clickDetector = Instance.new("ClickDetector")
+        clickDetector.MaxActivationDistance = 10
+        clickDetector.Parent = npcModel.PrimaryPart
+        print("Created new ClickDetector for NPC")
+    end
+    
+    clickDetector.MouseClick:Connect(function(player)
+        print(player.Name, "clicked the voting NPC")
+        
+        -- Get current vote status for this player
+        local currentVote = nil
+        if voteData.voted[player.UserId] then
+            currentVote = voteData.voted[player.UserId].vote
+        end
+        
+        -- Open the voting menu with current vote status
+        openVoteMenuEvent:FireClient(player, currentVote)
+    end)
+    
+    print("NPC interaction setup complete")
+end
 
--- Cleanup on player removal
-Players.PlayerRemoving:Connect(function(player)
-    lastInteraction[player.UserId] = nil
-    lastVoteTime[player.UserId] = nil
-end)
+----------------------------
+-- SELF-REPAIR SYSTEM
+----------------------------
 
-print("Unified voting NPC system ready!")
+-- Check if vote display is still valid, recreate if needed
+local function checkVoteDisplay()
+    if not voteData.voteDisplay or not voteData.voteDisplay.Parent then
+        print("Vote display missing - recreating")
+        createVoteDisplay()
+    end
+end
+
+-- Self-repair loop
+local function startSelfRepairSystem()
+    spawn(function()
+        while wait(5) do -- Check every 5 seconds
+            checkVoteDisplay()
+        end
+    end)
+end
+
+----------------------------
+-- PLAYER MANAGEMENT
+----------------------------
+
+-- Handle player leaving
+local function onPlayerRemoving(player)
+    local userId = player.UserId
+    
+    -- If the player had voted, they're leaving, so remove their vote
+    if voteData.voted[userId] then
+        local playerVote = voteData.voted[userId].vote
+        
+        -- Adjust the counts
+        if playerVote then
+            voteData.likes = voteData.likes - 1
+        else
+            voteData.dislikes = voteData.dislikes - 1
+        end
+        
+        -- Clean up stored vote
+        voteData.voted[userId] = nil
+        
+        -- Update display
+        updateVoteDisplay()
+        print(player.Name, "left game, removed their vote")
+    end
+end
+
+----------------------------
+-- MAIN INITIALIZATION
+----------------------------
+
+-- Start the system
+local function initializeVotingSystem()
+    -- Create vote display
+    createVoteDisplay()
+    
+    -- Setup interaction
+    setupInteraction()
+    
+    -- Connect submit vote event
+    submitVoteEvent.OnServerEvent:Connect(function(player, liked)
+        processVote(player, liked)
+    end)
+    
+    -- Connect player leaving
+    Players.PlayerRemoving:Connect(onPlayerRemoving)
+    
+    -- Start self-repair system
+    startSelfRepairSystem()
+    
+    print("=== Voting NPC System Initialized ===")
+end
+
+-- Initialize!
+initializeVotingSystem()
