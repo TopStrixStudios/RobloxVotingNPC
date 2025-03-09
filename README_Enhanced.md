@@ -1,63 +1,92 @@
-# Enhanced Roblox Voting NPC System
+# Enhanced Voting NPC System
 
-An improved interactive NPC system that allows players to vote on game ideas and change their votes later. Fixed issues with duplicating displays and added anti-exploit features.
+## Latest Improvements
 
-## Enhanced Features
+The Enhanced Voting NPC system includes several major improvements:
 
-- **Vote Changing**: Players can now change their vote from like to dislike or vice versa
-- **No Duplicating Displays**: Fixed the issue where multiple hologram displays would appear
-- **Anti-Exploit Protections**:
-  - Rate limiting to prevent spam
-  - Vote verification to prevent inconsistencies
-  - Player validation to prevent fake submissions
-  - Periodic automatic vote count verification
-- **Improved User Interface**:
-  - Shows current vote status
-  - Highlights selected vote option
-  - Smooth animations for better feedback
+1. **Hologram Display with Title**
+   - Added title above the like/dislike count
+   - Enhanced visibility and appearance
+   - Updated content about different areas with different vibes
+
+2. **Improved "E" Key Interaction**
+   - Uses ProximityPrompt for modern interaction
+   - Shows title in the prompt text
+   - Easy to see and use on mobile and desktop
+
+3. **Redesigned Cooldown Notification**
+   - Wide and slim notification at the top of the screen
+   - Single line text for better readability
+   - Smoother animations
+
+4. **Customizable Content**
+   - Easy to change the idea title and description
+   - Shared between server and client
+   - Hebrew text support throughout
 
 ## Installation Instructions
 
-### 1. Server Script Setup
+### Step 1: Install the Server Script
 
-1. Place the `VotingNPC_Enhanced.lua` script inside your NPC model in Workspace
-2. Rename the script to exactly "VotingNPC" (no extension)
+1. Download [VotingNPC_Enhanced.lua](https://raw.githubusercontent.com/TopStrixStudios/RobloxVotingNPC/main/VotingNPC_Enhanced.lua)
+2. Place it INSIDE your NPC model
+3. Rename it to just "VotingNPC"
+4. Make sure the NPC model has a PrimaryPart
 
-### 2. Client Script Setup
+### Step 2: Install the Client Script
 
-1. Place the `VotingNPCClient_Enhanced.client.lua` script in `StarterPlayer/StarterPlayerScripts`
+1. Download [VotingNPCClient_Enhanced.client.lua](https://raw.githubusercontent.com/TopStrixStudios/RobloxVotingNPC/main/VotingNPCClient_Enhanced.client.lua)
+2. Place it in StarterPlayer → StarterPlayerScripts
+3. Rename it to "VotingNPCClient.client.lua"
 
-### 3. NPC Model Requirements
+### Step 3: Test in Studio
 
-- Your NPC model must have:
-  - A Humanoid
-  - A HumanoidRootPart or other primary part
-  - All parts properly connected
+1. Make sure "API Services" are enabled in Studio settings
+2. Enter Play mode to test the system
+3. Approach the NPC and press E to interact
 
-### 4. Test Your NPC
+## Customizing the Idea Content
 
-1. Make sure your NPC model has a PrimaryPart set (right-click → Set Primary Part)
-2. Ensure the PrimaryPart is anchored (Anchored = true)
-3. Run the game and approach your NPC
-4. Press "E" when the prompt appears
-5. Vote on the idea
-6. Approach again later to change your vote if desired
+To change the idea content, edit these lines at the top of the server script:
 
-## Fixes and Improvements
+```lua
+-- IDEA CONTENT
+local IDEA_TITLE = "אזורים עם ווייבים שונים" -- Different areas with different vibes
+local IDEA_DESCRIPTION = "הוספת אזורים שונים עם מוזיקות שונות: אזור לשינה, אזור לריכוז, אזור לעבודה, אזור לכיף עם חברים ועוד."
+-- Adding different areas with different music: areas for sleep, focus, work, fun with friends, and more
+```
 
-### 1. Duplicating Hologram Fix
-The system now properly removes old hologram displays before creating new ones, ensuring only one display per NPC.
+## Other Configuration Options
 
-### 2. Vote Changing Implementation
-Players' votes are now stored as BoolValue objects, allowing them to change their vote. The system updates vote counts appropriately when a vote is changed.
+Additional settings you can adjust:
 
-### 3. Anti-Exploit Measures
-- Time-based cooldowns to prevent rapid interactions
-- Validation of player existence and connections
-- Periodic automatic verification of vote counts
-- Protection against duplicate voting
+```lua
+-- CONFIGURATION
+local VOTE_COOLDOWN = 10 -- Seconds before a player can change their vote
+local DISPLAY_VISIBILITY_DISTANCE = 25 -- Maximum distance to see the display (studs)
+local HOLOGRAM_HEIGHT = 3.5 -- Height above NPC
+local UPDATE_INTERVAL = 0.5 -- How often to refresh the display
+local AUTO_SAVE_INTERVAL = 60 -- How often to auto-save vote data (seconds)
+local INTERACTION_DISTANCE = 8 -- How close player needs to be to interact (studs)
+```
 
-## Direct Download Links
+## Features Maintained from Previous Versions
 
-- [VotingNPC_Enhanced.lua](https://raw.githubusercontent.com/TopStrixStudios/RobloxVotingNPC/main/VotingNPC_Enhanced.lua)
-- [VotingNPCClient_Enhanced.client.lua](https://raw.githubusercontent.com/TopStrixStudios/RobloxVotingNPC/main/VotingNPCClient_Enhanced.client.lua)
+- Full data persistence between server restarts
+- 10-second cooldown for changing votes
+- Anti-exploit vote verification
+- Self-repair system for the display
+- Player vote tracking
+
+## Troubleshooting
+
+If you encounter any issues:
+
+1. Make sure you've removed all previous voting NPC scripts
+2. Check that Studio's API Services are enabled for DataStore
+3. Verify the NPC model has a PrimaryPart
+4. Check the Output window for error messages
+
+## Credits
+
+Created by TopStrixStudios
